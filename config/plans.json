@@ -1,0 +1,161 @@
+{
+  "_comment": "Тарифы и лимиты. Меняются без правки кода; после правки: перезапуск бота или /reload в админке. amount=null — без ограничений. period: total (за всё время), day (в сутки, МСК). Цена в Telegram Stars (XTR); price_rub — только подсказка для пользователя. watches — сколько автопоисков можно держать; watch_interval_days — как часто автопоиск присылает новые компании. year_price_stars — цена разовой покупки на 365 дней (0 — без годового варианта).",
+  "plans": {
+    "free": {
+      "title": "Нет подписки",
+      "tier": 0,
+      "price_stars": 0,
+      "price_rub_hint": 0,
+      "period_days": 0,
+      "results_per_search": 15,
+      "limits": {
+        "searches": {
+          "amount": 0,
+          "period": "total"
+        },
+        "results": {
+          "amount": 0,
+          "period": "total"
+        },
+        "card_opens": {
+          "amount": 0,
+          "period": "total"
+        },
+        "site_checks": {
+          "amount": 0,
+          "period": "total"
+        },
+        "ai_analyses": {
+          "amount": 0,
+          "period": "total"
+        },
+        "proposals": {
+          "amount": 0,
+          "period": "total"
+        },
+        "saved_leads": {
+          "amount": 0
+        },
+        "watches": {
+          "amount": 0
+        }
+      },
+      "perks": [],
+      "watch_interval_days": 7
+    },
+    "pro": {
+      "title": "PRO",
+      "tier": 1,
+      "price_stars": 199,
+      "price_rub_hint": 299,
+      "period_days": 30,
+      "results_per_search": 40,
+      "limits": {
+        "searches": {
+          "amount": 20,
+          "period": "day"
+        },
+        "results": {
+          "amount": 600,
+          "period": "day"
+        },
+        "card_opens": {
+          "amount": 300,
+          "period": "day"
+        },
+        "site_checks": {
+          "amount": 100,
+          "period": "day"
+        },
+        "ai_analyses": {
+          "amount": 30,
+          "period": "day"
+        },
+        "proposals": {
+          "amount": 60,
+          "period": "day"
+        },
+        "saved_leads": {
+          "amount": 500
+        },
+        "watches": {
+          "amount": 5
+        }
+      },
+      "perks": [
+        "Автопоиск: новые компании каждые 2 дня",
+        "Экспорт лидов в CSV"
+      ],
+      "watch_interval_days": 2,
+      "year_price_stars": 1790
+    },
+    "pro_plus": {
+      "title": "PRO+",
+      "tier": 2,
+      "price_stars": 549,
+      "price_rub_hint": 799,
+      "period_days": 30,
+      "results_per_search": 80,
+      "limits": {
+        "searches": {
+          "amount": 60,
+          "period": "day"
+        },
+        "results": {
+          "amount": 3000,
+          "period": "day"
+        },
+        "card_opens": {
+          "amount": 1500,
+          "period": "day"
+        },
+        "site_checks": {
+          "amount": 400,
+          "period": "day"
+        },
+        "ai_analyses": {
+          "amount": 120,
+          "period": "day"
+        },
+        "proposals": {
+          "amount": 250,
+          "period": "day"
+        },
+        "saved_leads": {
+          "amount": null
+        },
+        "watches": {
+          "amount": 20
+        }
+      },
+      "perks": [
+        "Автопоиск: новые компании каждый день",
+        "Экспорт лидов в CSV",
+        "Поиск сразу по 3 городам"
+      ],
+      "watch_interval_days": 1,
+      "year_price_stars": 4990
+    }
+  },
+  "features": {
+    "export": [
+      "pro",
+      "pro_plus"
+    ],
+    "multi_city": [
+      "pro_plus"
+    ]
+  },
+  "referral": {
+    "bonus_searches_for_referrer": 0,
+    "bonus_searches_for_invited": 0
+  },
+  "subscription_reminder_days": 3,
+  "trial": {
+    "plan": null,
+    "days": 0
+  },
+  "followup_days": 3,
+  "channel_bonus_searches": 0,
+  "partner_percent": 30
+}

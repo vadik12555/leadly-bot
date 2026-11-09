@@ -1,0 +1,21 @@
+[Unit]
+Description=Leadly Telegram bot
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=leadly
+WorkingDirectory=/opt/leadly
+ExecStart=/opt/leadly/.venv/bin/python -m leadly
+Restart=always
+RestartSec=10
+# если сеть недоступна при старте, бот завершится с понятной ошибкой, а systemd повторит через 10 с
+StartLimitIntervalSec=0
+Environment=PYTHONUNBUFFERED=1
+NoNewPrivileges=true
+ProtectSystem=full
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target
