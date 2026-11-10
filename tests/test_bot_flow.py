@@ -7,7 +7,7 @@ async def test_start_shows_value_limits_and_menu(tg):
     m = await tg.send("/start")
     assert "Leadly" in m.text and "OpenStreetMap" in m.text
     assert "пример" in m.text  # example result for first-time users
-    assert "Поиски: 3 из 3" in m.text
+    assert "🎁 <b>У тебя 3 бесплатных поиска</b>" in m.text
     labels = [b.text for b in m.buttons]
     for label in ("🔎 Найти клиентов", "📋 Мои лиды", "✍️ Создать предложение", "⭐ Тарифы",
                   "📊 Моя статистика", "❓ Помощь"):
@@ -105,7 +105,7 @@ async def test_unknown_city_is_reported_and_not_charged(tg):
     m = await tg.press("🔍 Найти")
     assert "не найден" in m.text and "Лимит поиска не списан" in m.text
     m = await tg.send("/start")
-    assert "Поиски: 3 из 3" in m.text
+    assert "У тебя 3 бесплатных поиска" in m.text
 
 
 async def test_source_failure_does_not_crash_or_charge(tg, fake_api):
@@ -117,7 +117,7 @@ async def test_source_failure_does_not_crash_or_charge(tg, fake_api):
     m = await tg.press("Повторить")
     assert "Найдено" in m.text
     m = await tg.send("/start")
-    assert "Поиски: 2 из 3" in m.text  # only the successful attempt was charged
+    assert "У тебя 2 бесплатных поиска" in m.text  # only the successful attempt was charged
 
 
 async def test_save_lead_and_no_duplicates(tg):

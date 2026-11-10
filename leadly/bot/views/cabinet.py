@@ -52,18 +52,23 @@ def _limit_text(plan: Plan, kind: str) -> str:
 
 def plans_screen(product: ProductConfig, current: Plan, until: str | None, payments_enabled: bool,
                  bonus: int, trial_available: bool = False, auto_renew: dict | None = None,
-                 ai: bool = False, promo: bool = False) -> Screen:
+                 ai: bool = False, promo: bool = False, trial_left: int | None = None) -> Screen:
     no_access = not current.is_paid and current.limit("searches").amount == 0
-    lines = ["⭐ <b>Тарифы Leadly</b>",
-             "Доступ пока не оплачен." if no_access else
-             f"Твой тариф: <b>{h(current.title)}</b>" + (f" до {fmt_date(until)}" if until else "")]
+    if trial_left is not None and not current.is_paid:
+        status = (f"🎁 Бесплатных поисков осталось: {trial_left}" if trial_left else
+                  "🎁 Бесплатные поиски закончились — выбери тариф, чтобы искать дальше.")
+    elif no_access:
+        status = "Доступ пока не оплачен."
+    else:
+        status = f"Твой тариф: <b>{h(current.title)}</b>" + (f" до {fmt_date(until)}" if until else "")
+    lines = ["⭐ <b>Тарифы Leadly</b>", status]
     if auto_renew:
         lines.append(f"🔁 Автопродление включено, следующее списание {fmt_date(auto_renew['ends_at'])}")
     if bonus:
         lines.append(f"Бонусных поисков: {bonus}")
     for plan in product.plans.values():
-        if not plan.is_paid and plan.limit("searches").amount == 0:
-            continue  # a free plan with no access isn't an option to show
+        if not plan.is_paid:
+            continue  # the free trial isn't something to choose: it's what a user has before paying
         price = "бесплатно" if not plan.is_paid else (
             f"{plan.price_stars} ⭐ / {plan.period_days} дней"
             + (f" (≈ {plan.price_rub_hint} ₽)" if plan.price_rub_hint else "")

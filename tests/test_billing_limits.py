@@ -6,13 +6,18 @@ from tests.conftest import run_search
 
 
 async def test_free_search_limit_persists_and_start_does_not_reset(tg):
-    for _ in range(3):
+    m = await tg.send("/start")
+    assert "🎁 <b>У тебя 3 бесплатных поиска</b>" in m.text
+    for left in (2, 1, 0):
         m = await run_search(tg)
         assert "Найдено" in m.text
-    m = await run_search(tg)
-    assert "Бесплатный лимит поисков закончился" in m.text and "(3/3)" in m.text
+        m = await tg.send("/start")
+        assert (f"У тебя {left} бесплатн" in m.text) if left else "Бесплатные поиски закончились" in m.text
+    m = await tg.press("Найти клиентов")  # the trial is over: straight to the tariffs with payment buttons
+    assert "Бесплатные поиски закончились" in m.text and "Тарифы Leadly" in m.text
+    assert "PRO · 199 ⭐/мес · автопродление" in str(m.markup)
     m = await tg.send("/start")  # /start must not refill the trial
-    assert "Поиски: 0 из 3" in m.text
+    assert "Бесплатные поиски закончились" in m.text
     # free functions remain available
     m = await tg.send("/leads")
     assert "Мои лиды" in m.text
@@ -25,7 +30,7 @@ async def test_repeated_find_tap_is_not_charged_twice(tg):
     # pressing "Повторный поиск" with unchanged parameters = same token -> same results, no charge
     await tg.press("Новый поиск")
     m = await tg.send("/start")
-    assert "Поиски: 2 из 3" in m.text
+    assert "У тебя 2 бесплатных поиска" in m.text
     rows = await tg.svc.db.fetchone("SELECT COUNT(*) AS n FROM usage_events WHERE kind = 'searches'")
     assert rows["n"] == 1
     # same filters screen, second tap on the same token
@@ -102,14 +107,14 @@ async def test_pre_checkout_rejects_wrong_amount_and_foreign_or_used_invoice(tg)
 async def test_no_activation_without_confirmed_payment(tg):
     await _buy(tg)  # invoice created, never paid
     m = await tg.send("/start")
-    assert "Твой тариф: FREE" in m.text
+    assert "У тебя 3 бесплатных поиска" in m.text and "Твой тариф" not in m.text
 
 
 async def test_unknown_payload_is_recorded_for_manual_review(tg):
     m = await tg.pay("sub:pro:1:forged", 199, "charge-orphan")
     assert "вручную" in m.text
     m = await tg.send("/start")
-    assert "Твой тариф: FREE" in m.text
+    assert "У тебя 3 бесплатных поиска" in m.text
     row = await tg.svc.db.fetchone("SELECT * FROM payments WHERE telegram_charge_id = 'charge-orphan'")
     assert row["error"] == "unknown payload"
 
@@ -132,7 +137,7 @@ async def test_renewal_extends_and_expiry_reminders(tg):
     assert await send_reminders(tg.bot, tg.svc) == 1
     assert "закончился" in tg.last.text and "FREE" not in tg.last.text
     m = await tg.send("/start")
-    assert "Твой тариф: FREE" in m.text
+    assert "У тебя 3 бесплатных поиска" in m.text  # back to the unused free searches
 
 
 async def test_referral_once_no_self_invite(tg):
@@ -155,12 +160,16 @@ async def test_referral_once_no_self_invite(tg):
 async def test_bonus_search_used_after_trial(tg):
     await tg.send("/start")
     await tg.svc.db.execute("UPDATE users SET bonus_searches = 1 WHERE id = ?", tg.user["id"])
+    m = await tg.send("/start")
+    assert "У тебя 4 бесплатных поиска" in m.text  # 3 free + 1 bonus
     for _ in range(3):
         await run_search(tg)
     m = await run_search(tg)
     assert "Найдено" in m.text  # bonus search spent
-    m = await run_search(tg)
-    assert "лимит поисков закончился" in m.text
+    m = await tg.send("/start")
+    assert "Бесплатные поиски закончились" in m.text
+    m = await tg.press("Найти клиентов")
+    assert "Бесплатные поиски закончились" in m.text
 
 
 async def test_admin_only_for_admin_ids(tg):
@@ -190,7 +199,7 @@ async def test_admin_refund(tg):
     assert "Возврат выполнен" in m.text
     assert tg.session.refunds[-1].telegram_payment_charge_id == "charge-r"
     m = await tg.send("/start")
-    assert "Твой тариф: FREE" in m.text
+    assert "У тебя 3 бесплатных поиска" in m.text and "Твой тариф" not in m.text
 
 
 async def test_paysupport_and_terms(tg):

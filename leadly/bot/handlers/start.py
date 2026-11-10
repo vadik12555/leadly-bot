@@ -30,10 +30,17 @@ async def welcome_screen(svc: Services, user: User, first_time: bool = False):
     bonus = svc.settings.product.channel_bonus if channel and not user.channel_bonus_at else 0
     goal = await svc.account.goal_progress(user)
     product = svc.settings.product
-    locked = summary[SEARCHES].limit == 0 and not user.bonus_searches
+    searches = summary[SEARCHES]
+    trial_left = None  # subscribers see their plan counters instead
+    if not plan.is_paid and searches.limit is not None:
+        trial_left = searches.remaining + user.bonus_searches
+        if not searches.limit and not trial_left:
+            trial_left = None  # free searches aren't offered at all: plain paywall
+    unpaid = trial_left is not None or (not plan.is_paid and searches.limit == 0)
     return views.welcome(plan, summary, src.title, src.is_demo, first_time, trial, channel, bonus, goal,
-                         referral=product.referral_enabled, price_from=product.lowest_price if locked else 0,
-                         ai=svc.leads.ai_ready)
+                         referral=product.referral_enabled, price_from=product.lowest_price if unpaid else 0,
+                         ai=svc.leads.ai_ready, trial_left=trial_left,
+                         watches=plan.limit("watches").amount != 0)
 
 
 async def cmd_start(message: Message, command: CommandObject, user: User, is_new_user: bool,

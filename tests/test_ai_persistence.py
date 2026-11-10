@@ -119,7 +119,7 @@ async def test_data_survives_restart(settings, fake_api):
         m = await sim2.send("Казань")  # FSM state restored from SQLite
         assert "Шаг 4 из 4" in m.text and "Стоматологии" in m.text
         m = await sim2.send("/start")
-        assert "Поиски: 2 из 3" in m.text  # usage survived
+        assert "У тебя 2 бесплатных поиска" in m.text  # usage survived
         m = await sim2.send("/leads")
         assert "Все · 1" in str(m.markup)
     finally:

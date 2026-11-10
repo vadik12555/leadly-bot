@@ -78,22 +78,28 @@ async def _changed(state: FSMContext, **values) -> None:
 
 
 async def _locked(user: User, svc: Services) -> bool:
-    """The plan has no searches at all: send to payment before the four-step form, not after it."""
+    """No free searches left (or none at all) and no subscription: send to payment before the four-step
+    form, not after it. A daily limit of a paid plan is not a lock — it resets tomorrow."""
     quota = await svc.usage.peek(user, SEARCHES)
-    return quota.limit == 0 and not quota.ok
+    return not quota.ok and quota.period != "day"
+
+
+async def _to_plans(target, user: User, svc: Services) -> None:
+    from leadly.bot.handlers.billing import _plans
+    await _plans(target, user, svc)
 
 
 async def cb_find(cb: CallbackQuery, state: FSMContext, user: User, svc: Services) -> None:
     await state.clear()
     if await _locked(user, svc):
-        return await show(cb, views.paywall())
+        return await _to_plans(cb, user, svc)
     await _go(cb, state, user, svc, "service")
 
 
 async def cmd_find(message: Message, state: FSMContext, user: User, svc: Services) -> None:
     await state.clear()
     if await _locked(user, svc):
-        return await show(message, views.paywall())
+        return await _to_plans(message, user, svc)
     await _go(message, state, user, svc, "service")
 
 
@@ -235,7 +241,8 @@ async def run_search(cb: CallbackQuery, state: FSMContext, user: User, svc: Serv
     first = await svc.db.fetchone("SELECT COUNT(*) AS n FROM searches WHERE user_id = ? AND status = 'ok' "
                                   "AND token NOT LIKE 'watch:%'", user.id)
     tip = first["n"] == 1 and bool(view.items) and not outcome.reused
-    await edit(bot, loading, sv.results(view, 0, svc.search_sources.attribution, outcome.warnings, tip=tip))
+    await edit(bot, loading, sv.results(view, 0, svc.search_sources.attribution, outcome.warnings, tip=tip,
+                                        watch=await _can_watch(user, svc)))
 
 
 async def cb_results(cb: CallbackQuery, callback_data: Res, user: User, svc: Services) -> None:
@@ -249,7 +256,11 @@ async def cb_results(cb: CallbackQuery, callback_data: Res, user: User, svc: Ser
         await cb.answer(note, show_alert=True)
         view = await svc.search.get(user.id, view.id)
         page = 0
-    await show(cb, sv.results(view, page, svc.search_sources.attribution))
+    await show(cb, sv.results(view, page, svc.search_sources.attribution, watch=await _can_watch(user, svc)))
+
+
+async def _can_watch(user: User, svc: Services) -> bool:
+    return (await svc.billing.plan(user.id)).limit("watches").amount != 0
 
 
 def create_router() -> Router:

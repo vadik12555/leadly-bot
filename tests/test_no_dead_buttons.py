@@ -63,10 +63,23 @@ async def live(settings, fake_api):
     await sim.close()
 
 
-async def test_no_dead_buttons_without_subscription(live):
-    broken, labels = await crawl(live)
-    print(f"\nno subscription: {len(labels)} buttons\nBROKEN: {broken}")
-    assert not broken and "⭐ Купить доступ" in labels
+async def test_no_dead_buttons_on_free_searches(live):
+    broken, labels = await crawl(live, await run_search(live))
+    broken2, labels2 = await crawl(live)
+    broken, labels = broken + broken2, labels | labels2
+    print(f"\nfree searches: {len(labels)} buttons\nBROKEN: {broken}")
+    assert not broken and "⭐ Тарифы" in labels
+    assert "🔔 Автопоиск" not in labels and not any("Следить" in t for t in labels)  # not in the trial
+
+
+async def test_no_dead_buttons_after_the_trial(live):
+    for _ in range(3):
+        await run_search(live)
+    start = await live.send("/start")
+    assert "⭐ Купить доступ" in [b.text for b in start.buttons]
+    broken, labels = await crawl(live, start)
+    print(f"\ntrial over: {len(labels)} buttons\nBROKEN: {broken}")
+    assert not broken and any("⭐/мес" in t for t in labels)  # payment buttons were reached
 
 
 async def test_no_dead_buttons_with_subscription(live):

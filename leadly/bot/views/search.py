@@ -113,7 +113,7 @@ def _marks(co: Company) -> str:
 
 
 def results(view: SearchView, page: int, attribution: str, warnings: list[str] | None = None,
-            tip: bool = False) -> Screen:
+            tip: bool = False, watch: bool = True) -> Screen:
     if not view.items:
         return ("🤷 <b>Ничего не найдено</b>\n\nВ источнике нет компаний с такими параметрами. "
                 "Попробуй другую категорию, город или сними фильтры.\nЛимит поиска не списан.",
@@ -153,6 +153,7 @@ def results(view: SearchView, page: int, attribution: str, warnings: list[str] |
     rows.append(pager(page, pages, lambda p: Res(sid=view.id, page=p)))
     if with_contacts:
         rows.append([b(f"⭐ Сохранить всех с контактами ({with_contacts})", Res(sid=view.id, page=-1))])
-    rows.append([b("🔔 Следить за новыми", Watch(act="add", id=view.id))])
+    if watch:  # hidden when the plan has no auto-search at all
+        rows.append([b("🔔 Следить за новыми", Watch(act="add", id=view.id))])
     rows.append([b("🔄 Новый поиск", Menu(to="find")), home_btn()])
     return "\n".join(lines), kb(*rows)

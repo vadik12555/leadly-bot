@@ -44,7 +44,7 @@ async def test_trial_once(tg):
     # even after the trial ends it cannot be taken again
     await tg.svc.db.execute("UPDATE subscriptions SET ends_at = '2000-01-01T00:00:00+00:00'")
     m = await tg.send("/plans")
-    assert "Твой тариф: <b>FREE</b>" in m.text and "бесплатно на 3 дня" not in str(m.markup)
+    assert "Бесплатных поисков осталось: 3" in m.text and "бесплатно на 3 дня" not in str(m.markup)
 
 
 async def test_promo_codes(tg):

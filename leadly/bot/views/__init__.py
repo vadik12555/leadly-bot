@@ -9,6 +9,7 @@ from aiogram.types import InlineKeyboardButton as Btn, InlineKeyboardMarkup
 from leadly.bot.callbacks import Menu
 from leadly.config import (AI_ANALYSES, CARD_OPENS, PROPOSALS, RESULTS, SEARCHES, SITE_CHECKS, Plan)
 from leadly.services.usage import Quota
+from leadly.utils import plural
 
 Screen = tuple[str, InlineKeyboardMarkup]
 
@@ -69,15 +70,19 @@ def quota_line(quota: Quota) -> str:
     return f"{left} из {quota.limit}{suffix}"
 
 
-def paywall() -> Screen:
-    return ("🔒 <b>Поиск клиентов доступен по подписке</b>\n\n"
-            "Оплати тариф звёздами Telegram — и бот сразу начнёт выдавать компании с контактами.",
+def paywall(trial_over: bool = False) -> Screen:
+    title = "🎁 Бесплатные поиски закончились" if trial_over else "🔒 Поиск клиентов доступен по подписке"
+    return (f"<b>{title}</b>\n\n"
+            "Оплати тариф звёздами Telegram — и бот сразу продолжит выдавать компании с контактами. "
+            "Найденные компании и сохранённые лиды остаются у тебя.",
             kb([b("⭐ Купить доступ", Menu(to="plans"))], [home_btn()]))
 
 
 def limit_reached(kind: str, quota: Quota, plan: Plan) -> Screen:
     if quota.limit == 0:  # this plan has no access at all: nothing "ran out", it has to be bought
         return paywall()
+    if not plan.is_paid and kind in (SEARCHES, RESULTS):  # the free trial is over
+        return paywall(trial_over=True)
     what = KIND_NAMES.get(kind, "действий")
     if quota.period == "day":
         text = (f"⏳ <b>Дневной лимит {what} исчерпан</b> ({quota.used}/{quota.limit}).\n\n"
@@ -95,17 +100,17 @@ def limit_reached(kind: str, quota: Quota, plan: Plan) -> Screen:
 
 
 def main_menu_kb(channel: str | None = None, channel_bonus: int = 0, referral: bool = False, ai: bool = False,
-                 locked: bool = False) -> InlineKeyboardMarkup:
+                 locked: bool = False, watches: bool = True) -> InlineKeyboardMarkup:
     extra = []
     if channel:
         extra.append([url_btn("📣 Наш канал", f"https://t.me/{channel}")]
                      + ([b(f"🎁 +{channel_bonus} поиска за подписку", Menu(to="chbonus"))] if channel_bonus else []))
-    if locked:  # nothing else works without a subscription, so nothing else is offered
+    if locked:  # free searches are used up: only leads found earlier and payment are left
         return kb([b("🔎 Найти клиентов", Menu(to="find"))], [b("⭐ Купить доступ", Menu(to="plans"))],
-                  [b("❓ Помощь", Menu(to="help"))], *extra)
+                  [b("📋 Мои лиды", Menu(to="leads")), b("❓ Помощь", Menu(to="help"))], *extra)
     return kb(
         [b("🔎 Найти клиентов", Menu(to="find"))],
-        [b("📋 Мои лиды", Menu(to="leads")), b("🔔 Автопоиск", Menu(to="watches"))],
+        [b("📋 Мои лиды", Menu(to="leads"))] + ([b("🔔 Автопоиск", Menu(to="watches"))] if watches else []),
         ([b("🤖 ИИ-анализ", Menu(to="ai"))] if ai else []) + [b("✍️ Создать предложение", Menu(to="prop"))],
         [b("⭐ Тарифы", Menu(to="plans")), b("👤 Мой профиль", Menu(to="profile"))],
         [b("📊 Моя статистика", Menu(to="stats"))] + ([b("🎁 Пригласить друга", Menu(to="ref"))] if referral else []),
@@ -117,7 +122,8 @@ def main_menu_kb(channel: str | None = None, channel_bonus: int = 0, referral: b
 def welcome(plan: Plan, summary: dict[str, Quota], sources: str, is_demo: bool, first_time: bool,
             trial_days: int = 0, channel: str | None = None, channel_bonus: int = 0,
             goal: tuple[int, int, int] | None = None, referral: bool = False, price_from: int = 0,
-            ai: bool = False) -> Screen:
+            ai: bool = False, trial_left: int | None = None, watches: bool = True) -> Screen:
+    """trial_left: free searches left for a user without a subscription (None for subscribers)."""
     lines = []
     if is_demo:
         lines += ["⚠️ <b>ДЕМО-РЕЖИМ:</b> компании в выдаче вымышленные, источник данных не подключён.", ""]
@@ -134,7 +140,18 @@ def welcome(plan: Plan, summary: dict[str, Quota], sources: str, is_demo: bool, 
             "<i>Салон красоты, Казань · сайт указан · проверка сайта: нет мобильной адаптации, "
             "в подвале © 2018 → гипотеза: предложить обновление сайта с мобильной версией.</i>",
         ]
-    if price_from:  # no free access: a price instead of "0 of 0" counters
+    locked = trial_left == 0
+    if trial_left:
+        lines += ["", f"🎁 <b>У тебя {trial_left} "
+                      f"{plural(trial_left, 'бесплатный поиск', 'бесплатных поиска', 'бесплатных поисков')}</b>"]
+        if price_from:
+            lines.append(f"Дальше — подписка от {price_from} ⭐ в месяц.")
+    elif locked:
+        lines += ["", "🔒 <b>Бесплатные поиски закончились.</b>"
+                  + (f" Доступ к поиску — от {price_from} ⭐ в месяц." if price_from else "")
+                  + " Нажми «⭐ Купить доступ»."]
+    elif price_from:  # no free searches configured at all: a price instead of "0 of 0" counters
+        locked = True
         lines += ["", f"🔒 <b>Доступ к поиску — от {price_from} ⭐ в месяц.</b> Нажми «⭐ Купить доступ»."]
     else:
         lines += ["", f"<b>Твой тариф: {h(plan.title)}</b>"]
@@ -147,7 +164,7 @@ def welcome(plan: Plan, summary: dict[str, Quota], sources: str, is_demo: bool, 
         lines.append(f"🎯 Сегодня написал {done} из {target}" + (" ✅" if done >= target else "")
                      + (f" · серия {streak} дн. 🔥" if streak > 1 else ""))
     lines += ["", "Leadly никому не пишет сам — ты решаешь, кому и что отправить."]
-    return "\n".join(lines), main_menu_kb(channel, channel_bonus, referral, ai, locked=bool(price_from))
+    return "\n".join(lines), main_menu_kb(channel, channel_bonus, referral, ai, locked=locked, watches=watches)
 
 
 def help_screen(sources: str, attribution: str, ai_status: str, support: str) -> Screen:

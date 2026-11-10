@@ -2,7 +2,7 @@
   "_comment": "Тарифы и лимиты. Меняются без правки кода; после правки: перезапуск бота или /reload в админке. amount=null — без ограничений. period: total (за всё время), day (в сутки, МСК). Цена в Telegram Stars (XTR); price_rub — только подсказка для пользователя. watches — сколько автопоисков можно держать; watch_interval_days — как часто автопоиск присылает новые компании. year_price_stars — цена разовой покупки на 365 дней (0 — без годового варианта).",
   "plans": {
     "free": {
-      "title": "Нет подписки",
+      "title": "Пробный доступ",
       "tier": 0,
       "price_stars": 0,
       "price_rub_hint": 0,
@@ -10,19 +10,19 @@
       "results_per_search": 15,
       "limits": {
         "searches": {
-          "amount": 0,
+          "amount": 3,
           "period": "total"
         },
         "results": {
-          "amount": 0,
+          "amount": 45,
           "period": "total"
         },
         "card_opens": {
-          "amount": 0,
+          "amount": 45,
           "period": "total"
         },
         "site_checks": {
-          "amount": 0,
+          "amount": 45,
           "period": "total"
         },
         "ai_analyses": {
@@ -30,11 +30,11 @@
           "period": "total"
         },
         "proposals": {
-          "amount": 0,
+          "amount": 45,
           "period": "total"
         },
         "saved_leads": {
-          "amount": 0
+          "amount": 45
         },
         "watches": {
           "amount": 0

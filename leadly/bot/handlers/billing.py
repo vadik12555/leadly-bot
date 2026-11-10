@@ -14,6 +14,7 @@ from leadly.bot.states import PromoInput
 from leadly.bot.ui import USER_TEXT, show
 from leadly.bot.views import cabinet as cv
 from leadly.bot.views import partners as pv
+from leadly.config import SEARCHES
 from leadly.db import User
 from leadly.services.partners import commission
 from leadly.services import Services
@@ -28,11 +29,15 @@ SUBSCRIPTION_PERIOD = 2592000  # 30 days — the only period Telegram allows for
 
 async def _plans(target, user: User, svc: Services) -> None:
     plan, sub = await svc.billing.current(user.id)
+    trial_left = None
+    if not plan.is_paid and plan.limit(SEARCHES).amount:
+        trial_left = await svc.usage.remaining(user, SEARCHES) + user.bonus_searches
     await show(target, cv.plans_screen(svc.settings.product, plan, sub["ends_at"] if sub else None,
                                        svc.settings.payments_enabled, user.bonus_searches,
                                        await svc.billing.trial_available(user),
                                        await svc.billing.auto_renewing(user.id), ai=svc.leads.ai_ready,
-                                       promo=bool(await svc.db.fetchone("SELECT 1 FROM promo_codes LIMIT 1"))))
+                                       promo=bool(await svc.db.fetchone("SELECT 1 FROM promo_codes LIMIT 1")),
+                                       trial_left=trial_left))
 
 
 async def cb_plans(cb: CallbackQuery, user: User, svc: Services, state: FSMContext) -> None:
