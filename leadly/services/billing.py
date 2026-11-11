@@ -59,6 +59,8 @@ class BillingService:
         plan = self.product.plans.get(plan_code)
         if not plan or not plan.is_paid or (yearly and not plan.year_price_stars):
             raise ValueError("plan is not purchasable")
+        if recurring and plan.period_days != 30:  # Telegram Stars subscriptions renew only every 30 days
+            raise ValueError("plan can't auto-renew")
         kind = "year" if yearly else ("rec" if recurring else "sub")
         payload = f"{kind}:{plan.code}:{user_id}:{secrets.token_hex(6)}"
         amount = plan.year_price_stars if yearly else plan.price_stars

@@ -1,6 +1,6 @@
 """Executor profile in proposals; auto-search watches; follow-up reminders."""
 
-from tests.conftest import run_search
+from tests.conftest import press_find, run_search
 
 
 async def test_profile_fills_proposals(tg):
@@ -175,7 +175,7 @@ async def test_daily_goal_streak_share_and_hints(tg):
 
 async def test_city_prompt_mentions_districts(tg):
     await tg.send("/start")
-    await tg.press("Найти клиентов")
+    await press_find(tg)
     await tg.press("Разработка сайта")
     await tg.press("Салоны красоты")
     await tg.press("Все категории")

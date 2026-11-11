@@ -116,9 +116,16 @@ async def tg(settings, fake_api):
     await sim.close()
 
 
+async def press_find(tg):
+    """The menu's search button: the red «🎁 N бесплатных поисков — попробовать» while the free searches last,
+    «🔎 Найти клиентов» otherwise."""
+    trial = any("— попробовать" in btn.text for btn in tg.last.buttons)
+    return await tg.press("— попробовать" if trial else "Найти клиентов")
+
+
 async def run_search(tg, service="Разработка сайта", niche="Салоны красоты", sub="Все категории", city="Казань"):
     await tg.send("/start")
-    await tg.press("Найти клиентов")
+    await press_find(tg)
     await tg.press(service)
     await tg.press(niche)
     if sub:

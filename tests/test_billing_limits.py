@@ -2,18 +2,18 @@
 
 from leadly.bot.app import send_reminders
 from leadly.utils import add_days_iso, now_iso
-from tests.conftest import run_search
+from tests.conftest import press_find, run_search
 
 
 async def test_free_search_limit_persists_and_start_does_not_reset(tg):
     m = await tg.send("/start")
-    assert "🎁 <b>У тебя 3 бесплатных поиска</b>" in m.text
+    assert "🎁 <b>У тебя 3 бесплатных поиска (осталось 3).</b>" in m.text
     for left in (2, 1, 0):
         m = await run_search(tg)
         assert "Найдено" in m.text
         m = await tg.send("/start")
-        assert (f"У тебя {left} бесплатн" in m.text) if left else "Бесплатные поиски закончились" in m.text
-    m = await tg.press("Найти клиентов")  # the trial is over: straight to the tariffs with payment buttons
+        assert (f"(осталось {left})" in m.text) if left else "Бесплатные поиски закончились" in m.text
+    m = await press_find(tg)  # the trial is over: straight to the tariffs with payment buttons
     assert "Бесплатные поиски закончились" in m.text and "Тарифы Leadly" in m.text
     assert "PRO · 199 ⭐/мес · автопродление" in str(m.markup)
     m = await tg.send("/start")  # /start must not refill the trial
@@ -30,11 +30,11 @@ async def test_repeated_find_tap_is_not_charged_twice(tg):
     # pressing "Повторный поиск" with unchanged parameters = same token -> same results, no charge
     await tg.press("Новый поиск")
     m = await tg.send("/start")
-    assert "У тебя 2 бесплатных поиска" in m.text
+    assert "(осталось 2)" in m.text
     rows = await tg.svc.db.fetchone("SELECT COUNT(*) AS n FROM usage_events WHERE kind = 'searches'")
     assert rows["n"] == 1
     # same filters screen, second tap on the same token
-    await tg.press("Найти клиентов")
+    await press_find(tg)
     await tg.press("Разработка сайта")
     await tg.press("Салоны красоты")
     await tg.press("Все категории")
@@ -161,14 +161,14 @@ async def test_bonus_search_used_after_trial(tg):
     await tg.send("/start")
     await tg.svc.db.execute("UPDATE users SET bonus_searches = 1 WHERE id = ?", tg.user["id"])
     m = await tg.send("/start")
-    assert "У тебя 4 бесплатных поиска" in m.text  # 3 free + 1 bonus
+    assert "У тебя 4 бесплатных поиска (осталось 4)" in m.text  # 3 free + 1 bonus
     for _ in range(3):
         await run_search(tg)
     m = await run_search(tg)
     assert "Найдено" in m.text  # bonus search spent
     m = await tg.send("/start")
     assert "Бесплатные поиски закончились" in m.text
-    m = await tg.press("Найти клиентов")
+    m = await press_find(tg)
     assert "Бесплатные поиски закончились" in m.text
 
 

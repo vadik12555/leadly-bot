@@ -76,7 +76,15 @@ class ProductConfig:
 
     @property
     def lowest_price(self) -> int:
-        return min((p.price_stars for p in self.plans.values() if p.is_paid), default=0)
+        """Lowest monthly price (shown as "от N ⭐ в месяц"; short passes like a week are not monthly)."""
+        monthly = [p.price_stars for p in self.plans.values() if p.is_paid and p.period_days >= 28]
+        return min(monthly or [p.price_stars for p in self.plans.values() if p.is_paid], default=0)
+
+    @property
+    def week_offer(self) -> Plan | None:
+        """The short paid pass offered when the free searches run out (plans.json: "pro_week")."""
+        plan = self.plans.get("pro_week")
+        return plan if plan and plan.is_paid else None
 
 
 def load_product_config(path: Path) -> ProductConfig:

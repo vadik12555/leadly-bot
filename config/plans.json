@@ -43,6 +43,51 @@
       "perks": [],
       "watch_interval_days": 7
     },
+    "pro_week": {
+      "title": "Неделя PRO",
+      "tier": 1,
+      "price_stars": 79,
+      "price_rub_hint": 0,
+      "period_days": 7,
+      "results_per_search": 40,
+      "limits": {
+        "searches": {
+          "amount": 20,
+          "period": "day"
+        },
+        "results": {
+          "amount": 600,
+          "period": "day"
+        },
+        "card_opens": {
+          "amount": 300,
+          "period": "day"
+        },
+        "site_checks": {
+          "amount": 100,
+          "period": "day"
+        },
+        "ai_analyses": {
+          "amount": 30,
+          "period": "day"
+        },
+        "proposals": {
+          "amount": 60,
+          "period": "day"
+        },
+        "saved_leads": {
+          "amount": 500
+        },
+        "watches": {
+          "amount": 5
+        }
+      },
+      "perks": [
+        "Автопоиск: новые компании каждые 2 дня",
+        "Экспорт лидов в CSV"
+      ],
+      "watch_interval_days": 2
+    },
     "pro": {
       "title": "PRO",
       "tier": 1,
@@ -139,6 +184,7 @@
   },
   "features": {
     "export": [
+      "pro_week",
       "pro",
       "pro_plus"
     ],

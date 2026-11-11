@@ -1,23 +1,23 @@
 """End-to-end scenarios through real Telegram updates (offline simulator)."""
 
-from tests.conftest import run_search
+from tests.conftest import press_find, run_search
 
 
 async def test_start_shows_value_limits_and_menu(tg):
     m = await tg.send("/start")
     assert "Leadly" in m.text and "OpenStreetMap" in m.text
     assert "пример" in m.text  # example result for first-time users
-    assert "🎁 <b>У тебя 3 бесплатных поиска</b>" in m.text
+    assert "🎁 <b>У тебя 3 бесплатных поиска (осталось 3).</b> Попробуй, потом реши." in m.text
     labels = [b.text for b in m.buttons]
-    for label in ("🔎 Найти клиентов", "📋 Мои лиды", "✍️ Создать предложение", "⭐ Тарифы",
-                  "📊 Моя статистика", "❓ Помощь"):
-        assert label in labels
+    assert labels[:3] == ["🎁 3 бесплатных поиска — попробовать", "⭐ Купить доступ", "❓ Помощь"]
+    for label in ("📋 Мои лиды", "✍️ Создать предложение", "📊 Моя статистика", "👤 Мой профиль"):
+        assert label in labels  # the rest of the menu stays during the trial
 
 
 async def test_every_menu_button_does_something(tg):
     await tg.send("/start")
-    expected = {"🔎 Найти клиентов": "Шаг 1 из 4", "📋 Мои лиды": "Мои лиды",
-                "✍️ Создать предложение": "Создать предложение", "⭐ Тарифы": "Тарифы Leadly",
+    expected = {"🎁 3 бесплатных поиска — попробовать": "Шаг 1 из 4", "📋 Мои лиды": "Мои лиды",
+                "✍️ Создать предложение": "Создать предложение", "⭐ Купить доступ": "Тарифы Leadly",
                 "📊 Моя статистика": "Моя статистика", "🎁 Пригласить друга": "ref_", "❓ Помощь": "Как работает"}
     for label, marker in expected.items():
         m = await tg.press(label)
@@ -63,7 +63,7 @@ async def test_results_pagination_back_and_next(tg, fake_api):
 
 async def test_subcategory_and_filters(tg, fake_api):
     await tg.send("/start")
-    await tg.press("Найти клиентов")
+    await press_find(tg)
     await tg.press("Создание лендинга")
     await tg.press("Салоны красоты")
     await tg.press("Парикмахерские")
@@ -77,7 +77,7 @@ async def test_subcategory_and_filters(tg, fake_api):
 
 async def test_invalid_input_and_cancel(tg):
     await tg.send("/start")
-    await tg.press("Найти клиентов")
+    await press_find(tg)
     await tg.press("Другое")
     m = await tg.send("ab")
     assert "Слишком коротко" in m.text
@@ -85,7 +85,7 @@ async def test_invalid_input_and_cancel(tg):
     assert "Leadly" in m.text
     m = await tg.send("видеосъёмка")
     assert "Я работаю через кнопки" in m.text  # state really cleared
-    await tg.press("Найти клиентов")
+    await press_find(tg)
     await tg.press("Разработка сайта")
     await tg.press("Стоматологии")
     await tg.press("Другой город")
@@ -97,7 +97,7 @@ async def test_invalid_input_and_cancel(tg):
 
 async def test_unknown_city_is_reported_and_not_charged(tg):
     await tg.send("/start")
-    await tg.press("Найти клиентов")
+    await press_find(tg)
     await tg.press("Разработка сайта")
     await tg.press("Стоматологии")
     await tg.press("Другой город")
@@ -117,7 +117,7 @@ async def test_source_failure_does_not_crash_or_charge(tg, fake_api):
     m = await tg.press("Повторить")
     assert "Найдено" in m.text
     m = await tg.send("/start")
-    assert "У тебя 2 бесплатных поиска" in m.text  # only the successful attempt was charged
+    assert "(осталось 2)" in m.text  # only the successful attempt was charged
 
 
 async def test_save_lead_and_no_duplicates(tg):
@@ -224,7 +224,7 @@ async def test_hot_filter_keeps_only_confirmed_problems(settings, fake_api):
     sim = await TelegramSimulator.create(settings, search_sources=osm_aggregator(fake_api), site_checker=OneBadSite())
     try:
         await sim.send("/start")
-        await sim.press("Найти клиентов")
+        await press_find(sim)
         await sim.press("Редизайн сайта")
         await sim.press("Салоны красоты")
         await sim.press("Все категории")
@@ -299,7 +299,7 @@ async def test_builder_filter(settings, fake_api):
     sim = await TelegramSimulator.create(settings, search_sources=osm_aggregator(fake_api), site_checker=TildaSite())
     try:
         await sim.send("/start")
-        await sim.press("Найти клиентов")
+        await press_find(sim)
         await sim.press("Разработка сайта")
         await sim.press("Салоны красоты")
         await sim.press("Все категории")

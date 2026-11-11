@@ -37,10 +37,13 @@ async def welcome_screen(svc: Services, user: User, first_time: bool = False):
         if not searches.limit and not trial_left:
             trial_left = None  # free searches aren't offered at all: plain paywall
     unpaid = trial_left is not None or (not plan.is_paid and searches.limit == 0)
+    trial_over = trial_left == 0
     return views.welcome(plan, summary, src.title, src.is_demo, first_time, trial, channel, bonus, goal,
                          referral=product.referral_enabled, price_from=product.lowest_price if unpaid else 0,
                          ai=svc.leads.ai_ready, trial_left=trial_left,
-                         watches=plan.limit("watches").amount != 0)
+                         watches=plan.limit("watches").amount != 0, trial_total=(searches.limit or 0) + user.bonus_searches,
+                         found=await svc.account.found_summary(user.id) if trial_over else None,
+                         week=product.week_offer if trial_over and svc.settings.payments_enabled else None)
 
 
 async def cmd_start(message: Message, command: CommandObject, user: User, is_new_user: bool,

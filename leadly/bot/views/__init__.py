@@ -4,9 +4,10 @@ from __future__ import annotations
 
 from html import escape as h
 
+from aiogram.enums import ButtonStyle
 from aiogram.types import InlineKeyboardButton as Btn, InlineKeyboardMarkup
 
-from leadly.bot.callbacks import Menu
+from leadly.bot.callbacks import Menu, Pay
 from leadly.config import (AI_ANALYSES, CARD_OPENS, PROPOSALS, RESULTS, SEARCHES, SITE_CHECKS, Plan)
 from leadly.services.usage import Quota
 from leadly.utils import plural
@@ -35,8 +36,8 @@ def kb(*rows) -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(inline_keyboard=[list(r) for r in rows if r])
 
 
-def b(text: str, cb) -> Btn:
-    return Btn(text=text, callback_data=cb.pack() if hasattr(cb, "pack") else cb)
+def b(text: str, cb, style: ButtonStyle | None = None) -> Btn:
+    return Btn(text=text, callback_data=cb.pack() if hasattr(cb, "pack") else cb, style=style)
 
 
 def url_btn(text: str, url: str) -> Btn:
@@ -99,14 +100,40 @@ def limit_reached(kind: str, quota: Quota, plan: Plan) -> Screen:
     return text, kb(*rows)
 
 
+def buy_btn() -> Btn:
+    return b("⭐ Купить доступ", Menu(to="plans"), style=ButtonStyle.SUCCESS)
+
+
+def week_btn(plan: Plan) -> Btn:
+    stars = plural(plan.price_stars, "звезду", "звезды", "звёзд")
+    return b(f"⭐ {plan.title} за {plan.price_stars} {stars}", Pay(act="buy", plan=plan.code),
+             style=ButtonStyle.SUCCESS)
+
+
 def main_menu_kb(channel: str | None = None, channel_bonus: int = 0, referral: bool = False, ai: bool = False,
-                 locked: bool = False, watches: bool = True) -> InlineKeyboardMarkup:
+                 locked: bool = False, watches: bool = True, trial_total: int = 0,
+                 week: Plan | None = None) -> InlineKeyboardMarkup:
+    """trial_total: free searches the trial gives (>0 while some are left); week: the pass offered after it."""
     extra = []
     if channel:
         extra.append([url_btn("📣 Наш канал", f"https://t.me/{channel}")]
                      + ([b(f"🎁 +{channel_bonus} поиска за подписку", Menu(to="chbonus"))] if channel_bonus else []))
+    if trial_total and not locked:
+        # free searches left: a big red button straight into the search, then payment and help;
+        # the rest of the menu stays below so nothing the trial includes gets hidden
+        free = plural(trial_total, "бесплатный поиск", "бесплатных поиска", "бесплатных поисков")
+        return kb(
+            [b(f"🎁 {trial_total} {free} — попробовать", Menu(to="find"), style=ButtonStyle.DANGER)],
+            [buy_btn(), b("❓ Помощь", Menu(to="help"))],
+            [b("📋 Мои лиды", Menu(to="leads"))] + ([b("🔔 Автопоиск", Menu(to="watches"))] if watches else []),
+            ([b("🤖 ИИ-анализ", Menu(to="ai"))] if ai else []) + [b("✍️ Создать предложение", Menu(to="prop"))],
+            [b("👤 Мой профиль", Menu(to="profile")), b("📊 Моя статистика", Menu(to="stats"))],
+            [b("🎁 Пригласить друга", Menu(to="ref"))] if referral else None,
+            *extra,
+        )
     if locked:  # free searches are used up: only leads found earlier and payment are left
-        return kb([b("🔎 Найти клиентов", Menu(to="find"))], [b("⭐ Купить доступ", Menu(to="plans"))],
+        return kb([week_btn(week)] if week else None,
+                  [b("🔎 Найти клиентов", Menu(to="find"))], [buy_btn()],
                   [b("📋 Мои лиды", Menu(to="leads")), b("❓ Помощь", Menu(to="help"))], *extra)
     return kb(
         [b("🔎 Найти клиентов", Menu(to="find"))],
@@ -122,8 +149,11 @@ def main_menu_kb(channel: str | None = None, channel_bonus: int = 0, referral: b
 def welcome(plan: Plan, summary: dict[str, Quota], sources: str, is_demo: bool, first_time: bool,
             trial_days: int = 0, channel: str | None = None, channel_bonus: int = 0,
             goal: tuple[int, int, int] | None = None, referral: bool = False, price_from: int = 0,
-            ai: bool = False, trial_left: int | None = None, watches: bool = True) -> Screen:
-    """trial_left: free searches left for a user without a subscription (None for subscribers)."""
+            ai: bool = False, trial_left: int | None = None, watches: bool = True, trial_total: int = 0,
+            found: tuple[int, int] | None = None, week: Plan | None = None) -> Screen:
+    """trial_left: free searches left for a user without a subscription (None for subscribers);
+    trial_total: how many free searches the trial gives; found: (companies, with phone or site) from them;
+    week: the short pass offered once the free searches are over."""
     lines = []
     if is_demo:
         lines += ["⚠️ <b>ДЕМО-РЕЖИМ:</b> компании в выдаче вымышленные, источник данных не подключён.", ""]
@@ -142,14 +172,22 @@ def welcome(plan: Plan, summary: dict[str, Quota], sources: str, is_demo: bool, 
         ]
     locked = trial_left == 0
     if trial_left:
-        lines += ["", f"🎁 <b>У тебя {trial_left} "
-                      f"{plural(trial_left, 'бесплатный поиск', 'бесплатных поиска', 'бесплатных поисков')}</b>"]
-        if price_from:
-            lines.append(f"Дальше — подписка от {price_from} ⭐ в месяц.")
+        total = trial_total or trial_left
+        lines += ["", f"🎁 <b>У тебя {total} "
+                      f"{plural(total, 'бесплатный поиск', 'бесплатных поиска', 'бесплатных поисков')} "
+                      f"(осталось {trial_left}).</b> Попробуй, потом реши."]
     elif locked:
-        lines += ["", "🔒 <b>Бесплатные поиски закончились.</b>"
-                  + (f" Доступ к поиску — от {price_from} ⭐ в месяц." if price_from else "")
-                  + " Нажми «⭐ Купить доступ»."]
+        lines += ["", "🔒 <b>Бесплатные поиски закончились.</b>"]
+        if found and found[0]:
+            companies, contacts = found
+            lines.append(f"📊 Итог: нашёл {companies} {plural(companies, 'компанию', 'компании', 'компаний')}, "
+                         f"у {contacts} из них есть телефон или сайт.")
+        if week:
+            lines.append(f"Продолжи с «{h(week.title)}»: {week.period_days} "
+                         f"{plural(week.period_days, 'день', 'дня', 'дней')} за {week.price_stars} ⭐.")
+        else:
+            lines.append((f"Доступ к поиску — от {price_from} ⭐ в месяц. " if price_from else "")
+                         + "Нажми «⭐ Купить доступ».")
     elif price_from:  # no free searches configured at all: a price instead of "0 of 0" counters
         locked = True
         lines += ["", f"🔒 <b>Доступ к поиску — от {price_from} ⭐ в месяц.</b> Нажми «⭐ Купить доступ»."]
@@ -164,7 +202,9 @@ def welcome(plan: Plan, summary: dict[str, Quota], sources: str, is_demo: bool, 
         lines.append(f"🎯 Сегодня написал {done} из {target}" + (" ✅" if done >= target else "")
                      + (f" · серия {streak} дн. 🔥" if streak > 1 else ""))
     lines += ["", "Leadly никому не пишет сам — ты решаешь, кому и что отправить."]
-    return "\n".join(lines), main_menu_kb(channel, channel_bonus, referral, ai, locked=locked, watches=watches)
+    return "\n".join(lines), main_menu_kb(channel, channel_bonus, referral, ai, locked=locked, watches=watches,
+                                          trial_total=(trial_total or trial_left or 0) if trial_left else 0,
+                                          week=week if trial_left == 0 else None)
 
 
 def help_screen(sources: str, attribution: str, ai_status: str, support: str) -> Screen:
@@ -193,4 +233,4 @@ def help_screen(sources: str, attribution: str, ai_status: str, support: str) ->
 
 
 __all__ = ["h", "Screen", "kb", "b", "url_btn", "home_btn", "cancel_btn", "chunk", "pager", "quota_line",
-           "limit_reached", "main_menu_kb", "welcome", "help_screen", "KIND_NAMES", "KIND_LABELS"]
+           "limit_reached", "main_menu_kb", "buy_btn", "week_btn", "welcome", "help_screen", "KIND_NAMES", "KIND_LABELS"]

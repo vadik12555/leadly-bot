@@ -29,6 +29,16 @@ class AccountService:
         return {"searches": searches, "viewed": viewed, "proposals": proposals,
                 **{k: (v or 0) for k, v in dict(leads).items()}}
 
+    async def found_summary(self, user_id: int) -> tuple[int, int]:
+        """(companies found in the user's searches, how many of them have a phone or a website)."""
+        row = await self.db.fetchone(
+            "SELECT COUNT(DISTINCT r.company_key) AS found, COUNT(DISTINCT CASE "
+            "WHEN COALESCE(json_extract(r.company, '$.phone'), '') != '' "
+            "OR COALESCE(json_extract(r.company, '$.website'), '') != '' THEN r.company_key END) AS reachable "
+            "FROM search_results r JOIN searches s ON s.id = r.search_id "
+            "WHERE s.user_id = ? AND s.status = 'ok'", user_id)
+        return (row["found"] or 0, row["reachable"] or 0) if row else (0, 0)
+
     # --- referrals -------------------------------------------------------------------
 
     def referral_link(self, user: User, bot_username: str) -> str:

@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from urllib.parse import quote
 
+from aiogram.enums import ButtonStyle
+
 from leadly.bot.callbacks import Adm, Menu, Pay
 from leadly.bot.views import KIND_LABELS, Screen, b, h, home_btn, kb, quota_line, url_btn  # noqa: F401 (kb/b reused by admin)
 from leadly.config import SAVED_LEADS, USAGE_KINDS, WATCHES, Plan, ProductConfig
@@ -102,7 +104,11 @@ def plans_screen(product: ProductConfig, current: Plan, until: str | None, payme
                        f"{plural(product.trial_days, 'день', 'дня', 'дней')}", Pay(act="trial"))])
     if payments_enabled:
         for plan in product.plans.values():
-            if plan.is_paid:
+            if plan.is_paid and plan.period_days != 30:  # a short pass: one-time payment only
+                rows.append([b(f"⭐ {plan.title} · {plan.price_stars} ⭐ / {plan.period_days} "
+                               f"{plural(plan.period_days, 'день', 'дня', 'дней')}", Pay(act="buy", plan=plan.code),
+                               style=ButtonStyle.SUCCESS)])
+            elif plan.is_paid:
                 rows.append([b(f"⭐ {plan.title} · {plan.price_stars} ⭐/мес · автопродление",
                                Pay(act="sub", plan=plan.code))])
                 row = [b(f"{plan.title} на {plan.period_days} дней разово", Pay(act="buy", plan=plan.code))]

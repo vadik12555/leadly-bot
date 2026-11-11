@@ -68,7 +68,7 @@ async def test_no_dead_buttons_on_free_searches(live):
     broken2, labels2 = await crawl(live)
     broken, labels = broken + broken2, labels | labels2
     print(f"\nfree searches: {len(labels)} buttons\nBROKEN: {broken}")
-    assert not broken and "⭐ Тарифы" in labels
+    assert not broken and "⭐ Купить доступ" in labels and "🎁 3 бесплатных поиска — попробовать" in labels
     assert "🔔 Автопоиск" not in labels and not any("Следить" in t for t in labels)  # not in the trial
 
 
@@ -77,6 +77,7 @@ async def test_no_dead_buttons_after_the_trial(live):
         await run_search(live)
     start = await live.send("/start")
     assert "⭐ Купить доступ" in [b.text for b in start.buttons]
+    assert start.buttons[0].text == "⭐ Неделя PRO за 79 звёзд"
     broken, labels = await crawl(live, start)
     print(f"\ntrial over: {len(labels)} buttons\nBROKEN: {broken}")
     assert not broken and any("⭐/мес" in t for t in labels)  # payment buttons were reached
