@@ -29,10 +29,15 @@ AREA_OFFSET = 3_600_000_000  # Overpass area id = relation id + 3.6e9
 MAX_ELEMENTS = 300
 NICHE_ELEMENTS = 1000  # a whole niche is stored once and filtered by subcategory locally
 COMPANY_CACHE_DAYS = 7  # stored companies younger than this are served without asking Overpass
+# an older stored copy is still served at once (the card shows its date) and refreshed in the background:
+# a user never waits for an overloaded public server when the bot already has the companies
+STALE_SERVE_DAYS = 90
 # public Overpass servers are often overloaded for a minute or two: go around the mirrors a few times
 OVERPASS_ROUNDS = 3
 OVERPASS_ATTEMPT_TIMEOUT = 60  # busy servers answer in 30-50 s
-OVERPASS_BUDGET = 150  # seconds a user may wait in total
+OVERPASS_BUDGET = 150  # background collection may wait this long
+SEARCH_BUDGET = 45  # a user waiting for results: fail sooner, nothing is charged for a failed search
+HEDGE_AFTER = 4.0  # no answer from a mirror in this many seconds: ask the next one as well
 
 
 class GeoCache(Protocol):
@@ -114,6 +119,10 @@ class OSMSearchProvider(SearchProvider):
         self._session: aiohttp.ClientSession | None = None
         self.geo_cache = geo_cache or MemoryGeoCache()
         self._nominatim_lock = asyncio.Lock()  # Nominatim policy: max 1 request/second
+        self._nominatim_last = 0.0
+        self._refreshing: set[str] = set()  # stored copies being refreshed in the background
+        self._refresh_lock = asyncio.Lock()  # one background refresh at a time (Overpass usage policy)
+        self._tasks: set[asyncio.Task] = set()
 
     @property
     def session(self) -> aiohttp.ClientSession:
@@ -122,6 +131,9 @@ class OSMSearchProvider(SearchProvider):
         return self._session
 
     async def close(self) -> None:
+        for task in list(self._tasks):
+            task.cancel()
+        await asyncio.gather(*self._tasks, return_exceptions=True)
         if self._session and not self._session.closed:
             await self._session.close()
 
@@ -135,8 +147,14 @@ class OSMSearchProvider(SearchProvider):
         params = {"q": city, "format": "jsonv2", "limit": "5", "accept-language": "ru",
                   "countrycodes": "ru,by,kz,uz,kg,am,ge,az"}
         async with self._nominatim_lock:
-            data = await self._get_json(f"{self.nominatim_url}/search", params, "геокодер OpenStreetMap")
-            await asyncio.sleep(self.nominatim_pause)
+            # the pause goes before the next request, not after this one: the user doesn't wait for it
+            wait = self._nominatim_last + self.nominatim_pause - time.monotonic()
+            if wait > 0:
+                await asyncio.sleep(wait)
+            try:
+                data = await self._get_json(f"{self.nominatim_url}/search", params, "геокодер OpenStreetMap")
+            finally:
+                self._nominatim_last = time.monotonic()
         place = pick_place(data, city)
         if not place:
             raise SearchProviderError(f"Город «{city}» не найден. Проверь написание.", retryable=False)
@@ -182,16 +200,27 @@ class OSMSearchProvider(SearchProvider):
     # --- stored companies ----------------------------------------------------------
 
     @staticmethod
-    def _cache_key(query: SearchQuery) -> str:
+    def _cache_key(query: SearchQuery, sub: bool = False) -> str:
         niche = query.niche_title.lower() if query.niche == "custom" else query.niche
-        return f"companies:{query.city.strip().lower()}|{niche}"
+        return f"companies:{query.city.strip().lower()}|{niche}" + (f"|{query.subcategory}" if sub else "")
 
     async def stored(self, query: SearchQuery) -> tuple[dict, str] | None:
+        """The stored whole niche (it answers every subcategory)."""
         return await self.company_cache.stamped(self._cache_key(query)) if self.company_cache else None
 
+    async def _stored_any(self, query: SearchQuery) -> tuple[dict, str] | None:
+        """The whole niche, or else this subcategory alone. A fresh copy wins over an old one."""
+        whole = await self.stored(query)
+        if not query.subcategory or not self.company_cache or (whole and is_fresh(whole[1], COMPANY_CACHE_DAYS)):
+            return whole
+        sub = await self.company_cache.stamped(self._cache_key(query, sub=True))
+        if whole and sub:
+            return max(whole, sub, key=lambda s: s[1])
+        return whole or sub
+
     async def _remember(self, query: SearchQuery, data: dict) -> None:
-        if self.company_cache and not query.subcategory:  # only a whole niche can answer every subcategory
-            await self.company_cache.set(self._cache_key(query), data)
+        if self.company_cache:  # a whole niche answers every subcategory; a subcategory only itself
+            await self.company_cache.set(self._cache_key(query, sub=bool(query.subcategory)), data)
 
     async def refresh(self, query: SearchQuery) -> int:
         """Background collection for a whole niche in a city. Returns how many objects were stored."""
@@ -200,17 +229,43 @@ class OSMSearchProvider(SearchProvider):
         await self._remember(query, data)
         return len(data.get("elements", []))
 
+    def _refresh_later(self, query: SearchQuery) -> None:
+        """Refresh an old stored copy without making the user wait for it (one refresh at a time)."""
+        key = self._cache_key(query, sub=bool(query.subcategory))
+        if key in self._refreshing:
+            return
+        self._refreshing.add(key)
+
+        async def run() -> None:
+            try:
+                async with self._refresh_lock:
+                    count = await self.refresh(query)
+                log.info("refreshed stored companies %s: %s objects", key, count)
+            except SearchProviderError as e:
+                log.info("background refresh of %s failed: %s", key, e.user_message)
+            except Exception:
+                log.exception("background refresh of %s crashed", key)
+            finally:
+                self._refreshing.discard(key)
+
+        task = asyncio.create_task(run())
+        self._tasks.add(task)
+        task.add_done_callback(self._tasks.discard)
+
     # --- search ------------------------------------------------------------------
 
     async def search(self, query: SearchQuery) -> list[Company]:
         geo = await self.resolve_city(query.city)
         ql, labels = self.build_query(query, geo)
-        stored = await self.stored(query)
+        stored = await self._stored_any(query)
         if stored and is_fresh(stored[1], COMPANY_CACHE_DAYS):
             data, fetched = stored
+        elif stored and is_fresh(stored[1], STALE_SERVE_DAYS):
+            data, fetched = stored  # the card shows this date, so an older copy stays honest
+            self._refresh_later(query)
         else:
             try:
-                data, fetched = await self._overpass(ql), now_iso()
+                data, fetched = await self._overpass(ql, budget=SEARCH_BUDGET, hedge=True), now_iso()
                 await self._remember(query, data)
             except SearchProviderError:
                 if not stored:
@@ -264,27 +319,78 @@ class OSMSearchProvider(SearchProvider):
 
     # --- HTTP ----------------------------------------------------------------------
 
-    async def _overpass(self, ql: str) -> dict[str, Any]:
+    async def _overpass(self, ql: str, budget: float = OVERPASS_BUDGET, hedge: bool = False) -> dict[str, Any]:
+        """Go around the mirrors (a few rounds within `budget` seconds). hedge=True: a user is waiting —
+        a mirror that is silent for HEDGE_AFTER seconds gets company from the next one, the first answer wins.
+        Without hedge (background collection) mirrors are asked one by one, to spare the public servers."""
         last: SearchProviderError | None = None
-        deadline = time.monotonic() + OVERPASS_BUDGET
+        deadline = time.monotonic() + budget
         for round_no in range(OVERPASS_ROUNDS):
             if round_no:
-                await asyncio.sleep(self.overpass_pause)
-            for url in self.overpass_urls:
-                left = deadline - time.monotonic()
-                if left < 5:
+                if deadline - time.monotonic() < self.overpass_pause + 5:
                     break
-                try:
-                    data = await self._post_json(url, {"data": ql}, min(OVERPASS_ATTEMPT_TIMEOUT, left))
-                    # a server that ran out of time answers 200 with no elements and a remark:
-                    # that is a failure, not "no companies in this city"
-                    if data.get("remark") and not data.get("elements"):
-                        raise SearchProviderError("OpenStreetMap перегружен или не ответил вовремя.")
-                    return data
-                except SearchProviderError as e:
-                    last = e
-                    log.warning("overpass endpoint failed: %s (%s)", url, e.user_message)
+                await asyncio.sleep(self.overpass_pause)
+            try:
+                if hedge:
+                    return await self._hedged_round(ql, deadline)
+                for url in self.overpass_urls:
+                    left = deadline - time.monotonic()
+                    if left < 5:
+                        break
+                    try:
+                        return await self._attempt(url, ql, min(OVERPASS_ATTEMPT_TIMEOUT, left))
+                    except SearchProviderError as e:
+                        last = e
+                        log.warning("overpass endpoint failed: %s (%s)", url, e.user_message)
+            except SearchProviderError as e:
+                last = e
         raise last or SearchProviderError("OpenStreetMap сейчас недоступен.")
+
+    async def _attempt(self, url: str, ql: str, timeout: float) -> dict[str, Any]:
+        data = await self._post_json(url, {"data": ql}, timeout)
+        # a server that ran out of time answers 200 with no elements and a remark:
+        # that is a failure, not "no companies in this city"
+        if data.get("remark") and not data.get("elements"):
+            raise SearchProviderError("OpenStreetMap перегружен или не ответил вовремя.")
+        return data
+
+    async def _hedged_round(self, ql: str, deadline: float) -> dict[str, Any]:
+        """One pass over the mirrors with staggered starts; the first good answer cancels the rest."""
+        urls = list(self.overpass_urls)
+        running: dict[asyncio.Task, str] = {}
+        last: SearchProviderError | None = None
+
+        def launch() -> bool:
+            left = deadline - time.monotonic()
+            if not urls or left < 5:
+                return False
+            url = urls.pop(0)
+            running[asyncio.create_task(self._attempt(url, ql, min(OVERPASS_ATTEMPT_TIMEOUT, left)))] = url
+            return True
+
+        launch()
+        try:
+            while running:
+                done, _ = await asyncio.wait(running, timeout=HEDGE_AFTER if urls else None,
+                                             return_when=asyncio.FIRST_COMPLETED)
+                if not done:  # the mirrors asked so far are silent: ask one more
+                    launch()
+                    continue
+                for task in done:
+                    url = running.pop(task)
+                    exc = task.exception()
+                    if exc is None:
+                        return task.result()
+                    last = exc if isinstance(exc, SearchProviderError) else \
+                        SearchProviderError("OpenStreetMap вернул некорректный ответ.")
+                    log.warning("overpass endpoint failed: %s (%s)", url, last.user_message)
+                    if not running:
+                        launch()  # a refusal: go to the next mirror at once
+        finally:
+            for task in running:
+                task.cancel()
+            await asyncio.gather(*running, return_exceptions=True)
+        raise last or SearchProviderError("OpenStreetMap не ответил вовремя.")
 
     async def _get_json(self, url: str, params: dict, what: str) -> Any:
         return await self._request("GET", url, what, params=params)

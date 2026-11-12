@@ -9,7 +9,8 @@ from leadly.devtools.fake_telegram import BOT_USER, TelegramSimulator
 from tests.conftest import StubChecker, osm_aggregator, run_search
 
 LIVE_PLANS = BASE_DIR / "config" / "plans.json"
-SKIP = ("Удалить", "удалить", "Отправить всем", "Не показывать")  # destructive: would hide the rest of the tree
+SKIP = ("Удалить", "удалить", "Отправить всем", "Не показывать",  # destructive: would hide the rest of the tree
+        "Соседний крупный город", "Все категории ниши")  # start a new search (own test in test_bot_flow)
 MAX_PRESSES = 500
 
 

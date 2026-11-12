@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from leadly import catalog as c
-from leadly.bot.callbacks import Co, Flow, Flt, Geo, Menu, Nch, Res, Sub, Svc, Watch
+from leadly.bot.callbacks import Alt, Co, Flow, Flt, Geo, Menu, Nch, Res, Sub, Svc, Watch
 from leadly.bot.views import Screen, b, cancel_btn, chunk, h, home_btn, kb, pager
 from leadly.models import Company
 from leadly.services.search import SearchView
@@ -93,9 +93,9 @@ def step_filters(service: c.Service, niche: c.Niche, sub: str | None, cities: li
 
 def searching(niche: c.Niche, cities: list[str], sources: str, hot: bool = False) -> str:
     extra = ("Проверяю сайты найденных компаний на проблемы, которые решает твоя услуга. "
-             "Обычно это занимает 1–2 минуты." if hot else
-             "Заодно ищу телефоны и почту на сайтах компаний. Обычно это занимает около минуты, "
-             "при большой нагрузке на источник — до 3 минут.")
+             "Обычно это занимает до 20 секунд." if hot else
+             "Обычно это несколько секунд. Телефоны и почту с сайтов компаний бот подтянет "
+             "в карточки сразу после показа выдачи.")
     return f"🔎 <b>Ищу компании…</b>\n{h(niche.label)} · 📍 {h(', '.join(cities))}\n\nИсточник: {h(sources)}. {extra}"
 
 
@@ -112,13 +112,30 @@ def _marks(co: Company) -> str:
     return ("🌐" if co.website else "—") + (" 📞" if co.phone else "") + (" ✉️" if co.email else "")
 
 
+FEW_RESULTS = 5  # fewer companies than this: offer ways to widen the search
+
+
+def widen_buttons(view: SearchView, neighbour: str | None) -> list[list]:
+    """«Все категории ниши» (if a subcategory was chosen), «Соседний крупный город», «Другая ниша»."""
+    rows = []
+    if view.subcategory and view.niche.code != "custom":
+        rows.append([b("📂 Все категории ниши", Alt(act="allcat", sid=view.id))])
+    if neighbour and len(view.cities) == 1:
+        rows.append([b(f"📍 Соседний крупный город · {neighbour}", Alt(act="near", sid=view.id))])
+    rows.append([b("🔀 Другая ниша", Alt(act="niche", sid=view.id))])
+    return rows
+
+
 def results(view: SearchView, page: int, attribution: str, warnings: list[str] | None = None,
-            tip: bool = False, watch: bool = True) -> Screen:
+            tip: bool = False, watch: bool = True, neighbour: str | None = None) -> Screen:
+    """neighbour: the nearest big city, offered when the search found fewer than FEW_RESULTS companies."""
     if not view.items:
-        return ("🤷 <b>Ничего не найдено</b>\n\nВ источнике нет компаний с такими параметрами. "
-                "Попробуй другую категорию, город или сними фильтры.\nЛимит поиска не списан.",
-                kb([b("⚙️ Изменить фильтры", Flow(to="filters"))], [b("🔄 Новый поиск", Menu(to="find"))],
-                   [home_btn()]))
+        return ("🤷 <b>В источнике нет компаний с такими параметрами</b>\n"
+                f"{h(view.niche.label)} · 📍 {h(', '.join(view.cities))}\n\n"
+                "Можно расширить поиск: все категории ниши, соседний крупный город или другая ниша.\n"
+                "Лимит поиска не списан.",
+                kb(*widen_buttons(view, neighbour), [b("⚙️ Изменить фильтры", Flow(to="filters"))],
+                   [b("🔄 Новый поиск", Menu(to="find"))], [home_btn()]))
     pages = max(1, -(-len(view.items) // RESULTS_PER_PAGE))
     page = max(0, min(page, pages - 1))
     chunk_items = view.items[page * RESULTS_PER_PAGE:(page + 1) * RESULTS_PER_PAGE]
@@ -132,6 +149,9 @@ def results(view: SearchView, page: int, attribution: str, warnings: list[str] |
     lines.append(f"📞 С контактами: {with_contacts} из {len(view.items)}")
     if len(view.items) < view.found:
         lines.append(f"Показаны первые {len(view.items)} (лимит тарифа).")
+    few = view.found < FEW_RESULTS
+    if few:
+        lines.append("Нашлось немного — можно расширить поиск кнопками ниже.")
     for w in warnings or []:
         lines.append(f"⚠️ {h(w)}")
     lines.append("")
@@ -153,6 +173,8 @@ def results(view: SearchView, page: int, attribution: str, warnings: list[str] |
     rows.append(pager(page, pages, lambda p: Res(sid=view.id, page=p)))
     if with_contacts:
         rows.append([b(f"⭐ Сохранить всех с контактами ({with_contacts})", Res(sid=view.id, page=-1))])
+    if few:
+        rows += widen_buttons(view, neighbour)
     if watch:  # hidden when the plan has no auto-search at all
         rows.append([b("🔔 Следить за новыми", Watch(act="add", id=view.id))])
     rows.append([b("🔄 Новый поиск", Menu(to="find")), home_btn()])

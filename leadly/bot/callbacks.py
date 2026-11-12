@@ -38,6 +38,11 @@ class Res(CallbackData, prefix="rs"):
     page: int = 0
 
 
+class Alt(CallbackData, prefix="al"):
+    act: str  # allcat | near | niche — widen a search that found too little
+    sid: int
+
+
 class Co(CallbackData, prefix="co"):
     k: str  # r = search result, s = saved lead
     ref: int  # search id or lead id

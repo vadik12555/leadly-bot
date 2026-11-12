@@ -12,7 +12,7 @@ from aiogram.types import CallbackQuery, Message
 
 from leadly import catalog as c
 from leadly.bot import views
-from leadly.bot.callbacks import Flow, Flt, Geo, Menu, Nch, Res, Sub, Svc
+from leadly.bot.callbacks import Alt, Flow, Flt, Geo, Menu, Nch, Res, Sub, Svc
 from leadly.bot.states import SearchFlow
 from leadly.bot.ui import NO_KB, USER_TEXT, edit, show
 from leadly.bot.views import search as sv
@@ -242,7 +242,44 @@ async def run_search(cb: CallbackQuery, state: FSMContext, user: User, svc: Serv
                                   "AND token NOT LIKE 'watch:%'", user.id)
     tip = first["n"] == 1 and bool(view.items) and not outcome.reused
     await edit(bot, loading, sv.results(view, 0, svc.search_sources.attribution, outcome.warnings, tip=tip,
-                                        watch=await _can_watch(user, svc)))
+                                        watch=await _can_watch(user, svc), neighbour=await _neighbour(view, svc)))
+
+
+async def _neighbour(view, svc: Services) -> str | None:
+    """Only needed when the search found too little (cached geocoder answer, no waiting)."""
+    if view.found >= sv.FEW_RESULTS or len(view.cities) != 1:
+        return None
+    return await svc.search.neighbour_city(view.cities[0])
+
+
+async def cb_widen(cb: CallbackQuery, callback_data: Alt, state: FSMContext, user: User, svc: Services,
+                   bot: Bot) -> None:
+    """Widen a search that found too little: all categories of the niche, the nearest big city, another niche."""
+    view = await svc.search.get(user.id, callback_data.sid)
+    if not view:
+        return await cb.answer("Этот поиск не найден", show_alert=True)
+    await state.set_state(None)
+    custom = lambda x: x.title if x.code == "custom" else None  # noqa: E731
+    params = dict(service=view.service.code, service_custom=custom(view.service), niche=view.niche.code,
+                  niche_custom=custom(view.niche), sub=view.subcategory, cities=view.cities,
+                  site=view.filters.get("site", c.SITE_ANY), contacts=bool(view.filters.get("contacts")),
+                  hot=bool(view.filters.get("hot")), builder=bool(view.filters.get("builder")))
+    if callback_data.act == "niche":
+        await _changed(state, **params)
+        return await _go(cb, state, user, svc, "niche")
+    if callback_data.act == "allcat":
+        params["sub"] = None
+    elif callback_data.act == "near":
+        city = await svc.search.neighbour_city(view.cities[0]) if len(view.cities) == 1 else None
+        if not city:
+            return await cb.answer("Не получилось определить соседний город", show_alert=True)
+        params["cities"] = [city]
+    else:
+        return
+    if await _locked(user, svc):
+        return await _to_plans(cb, user, svc)
+    await _changed(state, **params)
+    await run_search(cb, state, user, svc, bot)
 
 
 async def cb_results(cb: CallbackQuery, callback_data: Res, user: User, svc: Services) -> None:
@@ -256,7 +293,8 @@ async def cb_results(cb: CallbackQuery, callback_data: Res, user: User, svc: Ser
         await cb.answer(note, show_alert=True)
         view = await svc.search.get(user.id, view.id)
         page = 0
-    await show(cb, sv.results(view, page, svc.search_sources.attribution, watch=await _can_watch(user, svc)))
+    await show(cb, sv.results(view, page, svc.search_sources.attribution, watch=await _can_watch(user, svc),
+                              neighbour=await _neighbour(view, svc)))
 
 
 async def _can_watch(user: User, svc: Services) -> bool:
@@ -277,4 +315,5 @@ def create_router() -> Router:
     r.message.register(msg_city, SearchFlow.city, USER_TEXT)
     r.callback_query.register(cb_filter, Flt.filter())
     r.callback_query.register(cb_results, Res.filter())
+    r.callback_query.register(cb_widen, Alt.filter())
     return r

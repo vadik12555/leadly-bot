@@ -69,15 +69,76 @@ async def test_old_copy_beats_an_error_and_shows_its_date(fake_api):
     await provider.close()
 
 
-async def test_old_copy_is_replaced_when_the_servers_answer(fake_api):
+async def test_old_copy_is_served_at_once_and_replaced_in_the_background(fake_api):
+    import asyncio
     store = Store()
     provider = make(fake_api, store)
     await provider.refresh(niche())
     key, (data, _) = next(iter(store.items.items()))
-    store.items[key] = (data, (datetime.now(timezone.utc) - timedelta(days=30)).isoformat())
+    old = (datetime.now(timezone.utc) - timedelta(days=30)).isoformat()
+    store.items[key] = (data, old)
+    calls = overpass_calls(fake_api)
     found = await provider.search(niche())
-    assert found[0].fetched_at > "2026" and datetime.fromisoformat(store.items[key][1]).year >= 2026
+    assert found and found[0].fetched_at == old  # the user doesn't wait for the servers
+    await provider.search(niche())  # a second search while refreshing: still one refresh
+    await asyncio.gather(*provider._tasks)
+    assert overpass_calls(fake_api) == calls + 1
     assert datetime.now(timezone.utc) - datetime.fromisoformat(store.items[key][1]) < timedelta(minutes=1)
+    found = await provider.search(niche())
+    assert found[0].fetched_at != old  # the next search gets the refreshed copy
+    await provider.close()
+
+
+async def test_very_old_copy_waits_for_the_servers(fake_api):
+    store = Store()
+    provider = make(fake_api, store)
+    await provider.refresh(niche())
+    key, (data, _) = next(iter(store.items.items()))
+    store.items[key] = (data, (datetime.now(timezone.utc) - timedelta(days=200)).isoformat())
+    found = await provider.search(niche())
+    assert datetime.now(timezone.utc) - datetime.fromisoformat(found[0].fetched_at) < timedelta(minutes=1)
+    await provider.close()
+
+
+async def test_subcategory_answer_is_stored_and_reused(fake_api):
+    store = Store()
+    provider = make(fake_api, store)
+    hair = SearchQuery("beauty", "Салоны красоты", "hair", "Казань", 100)
+    assert [c.name for c in await provider.search(hair)] == ["Парикмахерская Стиль"]
+    calls = overpass_calls(fake_api)
+    fake_api.overpass_status = 504
+    assert [c.name for c in await provider.search(hair)] == ["Парикмахерская Стиль"]  # from the store
+    assert overpass_calls(fake_api) == calls
+    await provider.close()
+
+
+async def test_city_is_geocoded_once(fake_api):
+    provider = make(fake_api, Store())
+    await provider.search(niche())
+    await provider.search(SearchQuery("dental", "Стоматологии", None, "Казань", 100))
+    assert sum(1 for call in fake_api.calls if call.startswith("nominatim")) == 1
+    await provider.close()
+
+
+async def test_mirrors_are_hedged_first_answer_wins(fake_api, monkeypatch):
+    """A silent mirror doesn't hold the user: the next one is asked after HEDGE_AFTER seconds."""
+    import asyncio
+    import time
+    from leadly.providers.search import osm
+    monkeypatch.setattr(osm, "HEDGE_AFTER", 0.2)
+    provider = OSMSearchProvider(["http://slow.mirror/overpass", f"{fake_api.base}/overpass"],
+                                 f"{fake_api.base}/nominatim")
+    provider.nominatim_pause = provider.overpass_pause = 0
+    real = provider._post_json
+
+    async def post(url, form, timeout):
+        if url.startswith("http://slow.mirror"):
+            await asyncio.sleep(30)
+        return await real(url, form, timeout)
+    provider._post_json = post
+    t = time.monotonic()
+    found = await provider.search(niche())
+    assert found and time.monotonic() - t < 5
     await provider.close()
 
 

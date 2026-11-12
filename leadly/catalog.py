@@ -146,6 +146,30 @@ POPULAR_CITIES: tuple[str, ...] = (
 )
 MAX_CITIES = 3
 
+# city centres (lat, lon) — to suggest the nearest big city when a search finds too little
+CITY_CENTERS: dict[str, tuple[float, float]] = {
+    "Москва": (55.756, 37.617), "Санкт-Петербург": (59.934, 30.335), "Казань": (55.796, 49.109),
+    "Екатеринбург": (56.839, 60.606), "Новосибирск": (55.008, 82.936), "Нижний Новгород": (56.297, 43.936),
+    "Краснодар": (45.036, 38.975), "Самара": (53.196, 50.100), "Ростов-на-Дону": (47.236, 39.702),
+    "Уфа": (54.739, 55.972), "Челябинск": (55.164, 61.437), "Омск": (54.989, 73.324),
+    "Красноярск": (56.015, 92.893), "Воронеж": (51.661, 39.200), "Пермь": (58.011, 56.250),
+    "Волгоград": (48.708, 44.513), "Тюмень": (57.153, 65.534),
+}
+
+
+def nearest_big_city(lat: float, lon: float, exclude: str = "") -> str | None:
+    """The closest city from the buttons, other than `exclude` (equirectangular distance is enough here)."""
+    import math
+    best, best_d = None, float("inf")
+    for name, (clat, clon) in CITY_CENTERS.items():
+        if name.lower() == exclude.strip().lower():
+            continue
+        dx = math.radians(clon - lon) * math.cos(math.radians((clat + lat) / 2))
+        d = dx * dx + math.radians(clat - lat) ** 2
+        if d < best_d:
+            best, best_d = name, d
+    return best
+
 # --- result filters -------------------------------------------------------------
 
 SITE_ANY, SITE_YES, SITE_NO = "any", "yes", "no"

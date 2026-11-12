@@ -133,6 +133,7 @@ class SiteChecker:
                 elapsed = int((time.monotonic() - started) * 1000)
                 report = self.parse(normalized, final_url, status, html, elapsed, checked)
                 if with_contacts_page and report.contacts_page and report.ok:
+                    report.contacts_checked = True
                     try:
                         _, _, contacts_html = await self._fetch(session, report.contacts_page)
                         extra = self.parse(report.contacts_page, report.contacts_page, 200, contacts_html, 0, checked)

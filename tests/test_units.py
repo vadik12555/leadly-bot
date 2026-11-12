@@ -307,7 +307,7 @@ async def test_contacts_are_enriched_from_company_site(site_server, tmp_path):
                            source_id="b")
         no_site = _company(name="Без сайта", source_id="c")
         gained = await enrich_contacts([with_site, has_all, no_site], SiteChecker(allow_private=True), db)
-        assert gained == 1
+        assert gained == [with_site]
         assert with_site.phone == "+7 843 111-22-33" and with_site.email == "hello@lotos-kzn.ru"
         assert with_site.contacts_from_site == ["phone", "email"] and "VK" in with_site.socials
         assert has_all.contacts_from_site == [] and no_site.phone is None
@@ -330,8 +330,46 @@ async def test_enrichment_respects_time_budget(tmp_path):
     await db.connect()
     try:
         co = _company(website="http://slow.example")
-        assert await enrich_contacts([co], Slow(), db, timeout=0.2) == 0
+        assert await enrich_contacts([co], Slow(), db, timeout=0.2) == []
         assert co.phone is None
+        # one slow site is cut off by the per-site limit, not the whole budget
+        t = asyncio.get_running_loop().time()
+        assert await enrich_contacts([co], Slow(), db, timeout=10, per_site=0.2) == []
+        assert asyncio.get_running_loop().time() - t < 2
+    finally:
+        await db.close()
+
+
+async def test_enrichment_is_bounded_and_cached(tmp_path):
+    """At most 15 sites per search, at most 8 at once; a site checked once is not fetched again."""
+    import asyncio
+    from leadly.services.enrich import enrich_contacts
+    from leadly.utils import now_iso
+
+    class Counting:
+        def __init__(self):
+            self.calls, self.now, self.peak = 0, 0, 0
+
+        async def check(self, url, with_contacts_page=False):
+            self.calls += 1
+            self.now += 1
+            self.peak = max(self.peak, self.now)
+            await asyncio.sleep(0.05)
+            self.now -= 1
+            # a contacts page that has no email: must still count as checked
+            return SiteReport(url=url, checked_at=now_iso(), ok=True, phones=["+7 900 000-00-00"],
+                              contacts_page=url + "/contacts", contacts_checked=with_contacts_page)
+
+    db = Database(tmp_path / "b.db")
+    await db.connect()
+    try:
+        checker = Counting()
+        companies = [_company(name=f"Co {i}", website=f"http://co{i}.example", source_id=str(i)) for i in range(30)]
+        gained = await enrich_contacts(companies, checker, db)
+        assert checker.calls == 15 and checker.peak <= 8 and len(gained) == 15
+        again = [_company(name=f"Co {i}", website=f"http://co{i}.example", source_id=str(i)) for i in range(15)]
+        assert len(await enrich_contacts(again, checker, db)) == 15  # contacts come from the cache
+        assert checker.calls == 15
     finally:
         await db.close()
 

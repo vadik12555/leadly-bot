@@ -118,7 +118,7 @@ class LeadService:
         if company.is_demo:
             return ActionResult(False, error="Это демо-компания: её сайт не существует, проверка недоступна.")
         cached = await self.cached_report(company)
-        if cached and (not contacts or cached.contacts_page is None or cached.emails):
+        if cached and (not contacts or cached.contacts_page is None or cached.contacts_checked or cached.emails):
             return ActionResult(True)
         ref = f"{'contacts' if contacts else 'site'}:{url_key(company.website)}"
         quota = await self.usage.charge(user, SITE_CHECKS, ref)

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 from dataclasses import dataclass, field
@@ -59,6 +60,7 @@ class SearchService:
     def __init__(self, db: Database, aggregator: SearchAggregator, usage: UsageService, billing: BillingService,
                  checker=None):
         self.checker = checker
+        self.pending: set[asyncio.Task] = set()
         self.db = db
         self.aggregator = aggregator
         self.usage = usage
@@ -126,17 +128,16 @@ class SearchService:
             if req.site_filter == c.SITE_NO and co.website:
                 continue
             pool.append(co)
-        if self.checker:
-            from leadly.services.enrich import check_sites, enrich_contacts, rank_key, score_companies
-            if req.hot or req.builder:
-                await check_sites(pool, self.checker, self.db, limit=plan.results_per_search * 3)
-            else:
-                # many companies list only a website in the source: take phone/email from their own site
-                await enrich_contacts(pool[: plan.results_per_search * 2], self.checker, self.db,
-                                      limit=plan.results_per_search)
-            await score_companies(pool, req.service, req.niche.code, self.db)
-            pool.sort(key=rank_key)
-        from leadly.services.enrich import BUILDERS
+        from leadly.services.enrich import BUILDERS, check_sites, enrich_contacts, rank_key, score_companies
+        if self.checker and (req.hot or req.builder):
+            # these filters are answered by site checks themselves: bounded (15 sites, 8 at once, 5 s each)
+            await check_sites(pool, self.checker, self.db)
+        elif self.checker and req.contacts_only:
+            # "only with contacts" would drop companies that list just a website: a short bounded look first
+            await enrich_contacts([co for co in pool if not co.has_contacts], self.checker, self.db, timeout=6)
+        # contacts from site checks done earlier (cache only, no network) — the rest is looked up after showing
+        await score_companies(pool, req.service, req.niche.code, self.db)
+        pool.sort(key=rank_key)
         filtered = [co for co in pool
                     if (co.has_contacts or not req.contacts_only) and (co.signals or not req.hot)
                     and (co.cms in BUILDERS or not req.builder)]
@@ -155,7 +156,46 @@ class SearchService:
             await self.usage.refund(user, SEARCHES, ref)  # an empty result doesn't cost a search
         await self.db.execute("UPDATE searches SET status = 'ok', found = ?, delivered = ? WHERE id = ?",
                               len(filtered), deliver, search_id)
+        if self.checker and chosen:
+            self._background(self._enrich_results(search_id, chosen))
         return SearchOutcome(search_id=search_id, warnings=warnings)
+
+    # --- contacts from company sites, after the results are shown ------------------------
+
+    def _background(self, coro) -> asyncio.Task:
+        task = asyncio.create_task(coro)
+        self.pending.add(task)
+        task.add_done_callback(self.pending.discard)
+        return task
+
+    async def _enrich_results(self, search_id: int, chosen: list[Company]) -> int:
+        """Many companies list only a website in the source: take phone/email from their own site
+        (bounded: 15 sites, 8 at once, 5 s each; reports are cached) and update the stored results,
+        so cards and pages show them. Returns how many companies gained contacts."""
+        from leadly.services.enrich import enrich_contacts
+        try:
+            gained = await enrich_contacts(chosen, self.checker, self.db)
+            if gained:
+                index = {id(co): i for i, co in enumerate(chosen)}
+                await self.db.executemany(
+                    "UPDATE search_results SET company = ? WHERE search_id = ? AND idx = ?",
+                    [(json.dumps(co.to_dict(), ensure_ascii=False), search_id, index[id(co)]) for co in gained])
+            return len(gained)
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            log.exception("background contact enrichment failed for search %s", search_id)
+            return 0
+
+    async def drain(self) -> None:
+        """Wait for background lookups (tests, benchmarks, shutdown)."""
+        while self.pending:
+            await asyncio.gather(*list(self.pending), return_exceptions=True)
+
+    async def close(self) -> None:
+        for task in list(self.pending):
+            task.cancel()
+        await asyncio.gather(*list(self.pending), return_exceptions=True)
 
     async def get(self, user_id: int, search_id: int) -> SearchView | None:
         row = await self.db.fetchone("SELECT * FROM searches WHERE id = ? AND user_id = ?", search_id, user_id)
@@ -176,6 +216,23 @@ class SearchService:
             providers=row["providers"],
             created_at=row["created_at"],
         )
+
+    async def neighbour_city(self, city: str) -> str | None:
+        """The nearest big city (from the buttons) to `city`, using the geocoder's cached answer."""
+        name = city.split(",")[0].strip()
+        center = next((xy for title, xy in c.CITY_CENTERS.items() if title.lower() == name.lower()), None)
+        if not center:
+            from leadly.providers.search import OSMSearchProvider
+            osm = next((p for p in self.aggregator.providers if isinstance(p, OSMSearchProvider)), None)
+            try:
+                geo = await osm.resolve_city(city) if osm else None
+            except Exception:  # unknown city or geocoder unavailable: just don't offer the button
+                geo = None
+            if not geo or not geo.get("bbox"):
+                return None
+            s, w, n, e = geo["bbox"]
+            center = ((s + n) / 2, (w + e) / 2)
+        return c.nearest_big_city(*center, exclude=name)
 
     async def last_search_id(self, user_id: int) -> int | None:
         row = await self.db.fetchone("SELECT id FROM searches WHERE user_id = ? AND status = 'ok' "

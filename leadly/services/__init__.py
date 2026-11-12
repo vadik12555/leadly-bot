@@ -60,6 +60,7 @@ class Services:
         return self.rt.settings
 
     async def close(self) -> None:
+        await self.search.close()
         await self.search_sources.close()
         await self.ai.close()
 

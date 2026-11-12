@@ -118,6 +118,7 @@ class SiteReport:
     phones: list[str] = field(default_factory=list)
     socials: dict[str, str] = field(default_factory=dict)
     contacts_page: str | None = None
+    contacts_checked: bool = False  # the contacts page was fetched too (no need to fetch the site again)
     robots_blocked: bool = False
 
     def to_dict(self) -> dict[str, Any]:

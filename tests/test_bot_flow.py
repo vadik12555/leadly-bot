@@ -201,13 +201,74 @@ async def test_search_enriches_contacts_from_sites(settings, fake_api):
                                          site_checker=ContactsOnSite())
     try:
         m = await run_search(sim)
-        assert "📞 С контактами: 3 из 4" in m.text  # "Массаж Плюс" had only a site and email in OSM
+        assert "Найдено 4" in m.text
+        await sim.svc.search.drain()  # contacts from sites are looked up right after the results are shown
         m = await sim.press("Массаж Плюс")
         assert "+7 843 999-88-77 <i>(с сайта компании)</i>" in m.text
         assert "info@massage.example" in m.text  # the source's own email is kept, not overwritten
         assert "На сайте компании найден телефон" in m.text
     finally:
         await sim.close()
+
+
+async def test_results_do_not_wait_for_company_sites(settings, fake_api):
+    """Slow company sites must not delay the results: contacts from them arrive in the background."""
+    import asyncio
+    import time
+    from leadly.devtools.fake_telegram import TelegramSimulator
+    from tests.conftest import StubChecker, osm_aggregator
+
+    class SlowSites(StubChecker):
+        async def check(self, url, with_contacts_page=False):
+            await asyncio.sleep(1.5)
+            report = await super().check(url, with_contacts_page)
+            report.phones = ["+7 843 999-88-77"]
+            return report
+
+    sim = await TelegramSimulator.create(settings, search_sources=osm_aggregator(fake_api), site_checker=SlowSites())
+    try:
+        t = time.monotonic()
+        m = await run_search(sim)
+        assert "Найдено 4" in m.text and time.monotonic() - t < 1.5  # shown before any site answered
+        await sim.svc.search.drain()
+        row = await sim.svc.db.fetchone("SELECT company FROM search_results WHERE company LIKE '%Массаж Плюс%'")
+        assert "+7 843 999-88-77" in row["company"]  # the stored result got the phone from the site
+    finally:
+        await sim.close()
+
+
+async def test_few_results_offer_ways_to_widen(tg, fake_api):
+    m = await run_search(tg, sub="Парикмахерские")
+    assert "Найдена 1 компания" in m.text and "можно расширить поиск" in m.text
+    labels = [b.text for b in m.buttons]
+    assert "📂 Все категории ниши" in labels and "🔀 Другая ниша" in labels
+    assert "📍 Соседний крупный город · Самара" in labels  # the nearest big city to Kazan
+    m = await tg.press("Все категории ниши")
+    assert "Найдено 4" in m.text and "Все категории ниши" not in str(m.markup)
+    m = await tg.press("Соседний крупный город")
+    assert "📍 Самара" in m.text and "Найдено" in m.text
+    m = await tg.press("Другая ниша")
+    assert "Шаг 2 из 4" in m.text
+
+
+async def test_nothing_found_offers_ways_to_widen(tg, fake_api):
+    fake_api.elements = []
+    m = await run_search(tg)
+    assert "В источнике нет компаний" in m.text and "Лимит поиска не списан" in m.text
+    labels = [b.text for b in m.buttons]
+    assert "🔀 Другая ниша" in labels and any("Соседний крупный город" in t for t in labels)
+
+
+async def test_reachable_companies_come_first():
+    from leadly.models import Company
+    from leadly.services.enrich import rank_key
+
+    def co(name, **kw):
+        return Company(source="osm", source_title="OSM", source_id=name, name=name, category="x", city="Казань", **kw)
+    pool = [co("Только VK", socials={"VK": "vk.com/x"}), co("Ничего"), co("Сайт", website="http://a.ru"),
+            co("Телефон", phone="+7 900"), co("Проблема", website="http://b.ru")]
+    pool[-1].signals = ["нет мобильной версии"]
+    assert [c.name for c in sorted(pool, key=rank_key)] == ["Проблема", "Телефон", "Сайт", "Только VK", "Ничего"]
 
 
 async def test_hot_filter_keeps_only_confirmed_problems(settings, fake_api):
