@@ -309,6 +309,8 @@ async def run_polling(settings: Settings) -> int:
 
     db = Database(settings.db_path)
     await db.connect()
+    from leadly.services.seed import load_seed
+    await load_seed(db)  # the company base from the repository: searches don't depend on Overpass
     svc = build_services(settings, db)
     proxy = settings.telegram_proxy or system_proxy()
     if proxy:

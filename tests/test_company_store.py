@@ -169,6 +169,39 @@ async def test_collector_fills_everything_and_a_busy_server_only_postpones(fake_
     await provider.close()
 
 
+async def test_seed_fills_an_empty_server_and_search_works_without_overpass(fake_api, tmp_path):
+    """A server deployed from GitHub has no data/: the seed in the repository gives it the company base."""
+    from leadly.db import Database
+    from leadly.services.seed import SEED_PATH, export, load_seed
+    assert SEED_PATH.exists()  # shipped with the code
+    # a seed made from a database that has one stored niche
+    src = Database(tmp_path / "src.db")
+    await src.connect()
+    provider = make(fake_api, DbGeoCache(src))
+    provider.geo_cache = provider.company_cache
+    await provider.refresh(niche())
+    await provider.close()
+    await src.close()
+    seed = tmp_path / "seed.json.gz"
+    assert export(tmp_path / "src.db", seed) == 2  # the city geocode + the niche
+    db = Database(tmp_path / "server.db")
+    await db.connect()
+    try:
+        assert await load_seed(db, seed) == 2
+        assert await load_seed(db, seed) == 0  # next start: nothing to write
+        fake_api.overpass_status = 504
+        calls = len(fake_api.calls)
+        provider = make(fake_api, DbGeoCache(db))
+        provider.geo_cache = provider.company_cache
+        found = await provider.search(niche())
+        assert len(found) == 4 and len(fake_api.calls) == calls  # no Nominatim, no Overpass
+        await provider.close()
+        users = await db.fetchone("SELECT COUNT(*) AS n FROM users")
+        assert users["n"] == 0  # the seed carries no user data
+    finally:
+        await db.close()
+
+
 def test_collector_covers_every_niche_in_every_city():
     from leadly import catalog as c
     assert len(collector.targets()) == len(c.NICHES) * len(c.POPULAR_CITIES)
